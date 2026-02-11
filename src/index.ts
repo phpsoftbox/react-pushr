@@ -1,0 +1,265 @@
+export type PushrConnectSignature = {
+  appId: string;
+  timestamp: number;
+  signature: string;
+  url?: string;
+};
+
+export type PushrChannelAuth = {
+  auth: string;
+  channelData?: unknown;
+};
+
+export type PushrEventMessage = {
+  type: 'event';
+  channel: string;
+  event: string;
+  data?: unknown;
+};
+
+export type PushrConnectionMessage = {
+  type: 'connection';
+  socket_id: string;
+  timestamp: number;
+};
+
+export type PushrServerMessage =
+  | PushrEventMessage
+  | PushrConnectionMessage
+  | { type: 'subscribed'; channel: string }
+  | { type: 'unsubscribed'; channel: string }
+  | { type: 'error'; message: string };
+
+export type PushrClientOptions = {
+  url: string;
+  getConnectSignature: () => Promise<PushrConnectSignature> | PushrConnectSignature;
+  getChannelAuth?: (
+    channel: string,
+    socketId: string,
+    channelData?: unknown
+  ) => Promise<PushrChannelAuth> | PushrChannelAuth;
+  autoReconnect?: boolean;
+  reconnectDelayMs?: number;
+};
+
+type Listener<T = unknown> = (payload: T) => void;
+
+type ListenerMap = Map<string, Set<Listener>>;
+
+type ChannelListenerMap = Map<string, Map<string, Set<Listener>>>;
+
+export class PushrClient {
+  private ws: WebSocket | null = null;
+  private socketId: string | null = null;
+  private listeners: ListenerMap = new Map();
+  private channelListeners: ChannelListenerMap = new Map();
+  private reconnectTimer: number | null = null;
+
+  constructor(private readonly options: PushrClientOptions) {}
+
+  async connect(): Promise<void> {
+    const signature = await this.options.getConnectSignature();
+    const url = this.buildUrl(signature);
+
+    this.ws = new WebSocket(url);
+    this.ws.onmessage = (event) => this.handleMessage(event.data);
+    this.ws.onclose = () => this.handleClose();
+    this.ws.onerror = () => this.emit('error', { message: 'WebSocket error' });
+
+    await new Promise<void>((resolve, reject) => {
+      if (!this.ws) {
+        reject(new Error('WebSocket is not initialized'));
+        return;
+      }
+
+      this.ws.onopen = () => resolve();
+      this.ws.onerror = () => reject(new Error('WebSocket connection failed'));
+    });
+  }
+
+  disconnect(): void {
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+  }
+
+  async subscribe(channel: string, channelData?: unknown): Promise<void> {
+    const payload: Record<string, unknown> = {
+      type: 'subscribe',
+      channel,
+    };
+
+    if (this.requiresChannelAuth(channel)) {
+      const socketId = this.getSocketId();
+      const auth = await this.resolveChannelAuth(channel, socketId, channelData);
+      payload.auth = auth.auth;
+      if (auth.channelData !== undefined) {
+        payload.channel_data = auth.channelData;
+      }
+    }
+
+    this.send(payload);
+  }
+
+  unsubscribe(channel: string): void {
+    this.send({ type: 'unsubscribe', channel });
+  }
+
+  async publish(channel: string, event: string, data?: unknown): Promise<void> {
+    const payload: Record<string, unknown> = {
+      type: 'publish',
+      channel,
+      event,
+      data,
+    };
+
+    if (this.requiresChannelAuth(channel)) {
+      const socketId = this.getSocketId();
+      const auth = await this.resolveChannelAuth(channel, socketId);
+      payload.auth = auth.auth;
+      if (auth.channelData !== undefined) {
+        payload.channel_data = auth.channelData;
+      }
+    }
+
+    this.send(payload);
+  }
+
+  on<T = unknown>(type: string, listener: Listener<T>): void {
+    const set = this.listeners.get(type) ?? new Set();
+    set.add(listener as Listener);
+    this.listeners.set(type, set);
+  }
+
+  off<T = unknown>(type: string, listener: Listener<T>): void {
+    const set = this.listeners.get(type);
+    if (!set) {
+      return;
+    }
+    set.delete(listener as Listener);
+  }
+
+  onEvent(channel: string, event: string, listener: Listener): void {
+    const channelMap = this.channelListeners.get(channel) ?? new Map();
+    const eventSet = channelMap.get(event) ?? new Set();
+    eventSet.add(listener);
+    channelMap.set(event, eventSet);
+    this.channelListeners.set(channel, channelMap);
+  }
+
+  offEvent(channel: string, event: string, listener: Listener): void {
+    const channelMap = this.channelListeners.get(channel);
+    const eventSet = channelMap?.get(event);
+    eventSet?.delete(listener);
+  }
+
+  getSocketId(): string {
+    if (!this.socketId) {
+      throw new Error('Socket ID is not available yet. Wait for connection event.');
+    }
+
+    return this.socketId;
+  }
+
+  private handleMessage(raw: string): void {
+    let message: PushrServerMessage | null = null;
+    try {
+      message = JSON.parse(raw) as PushrServerMessage;
+    } catch {
+      this.emit('error', { message: 'Invalid JSON from server' });
+      return;
+    }
+
+    if (message.type === 'connection') {
+      this.socketId = message.socket_id;
+      this.emit('connection', message);
+      return;
+    }
+
+    if (message.type === 'event') {
+      this.emit('event', message);
+      this.emitChannelEvent(message.channel, message.event, message.data);
+      return;
+    }
+
+    this.emit(message.type, message);
+  }
+
+  private handleClose(): void {
+    this.emit('disconnect', {});
+    if (this.options.autoReconnect) {
+      const delay = this.options.reconnectDelayMs ?? 2000;
+      this.reconnectTimer = window.setTimeout(() => {
+        void this.connect();
+      }, delay);
+    }
+  }
+
+  private emit<T = unknown>(type: string, payload: T): void {
+    const set = this.listeners.get(type);
+    if (!set) {
+      return;
+    }
+
+    set.forEach((listener) => listener(payload));
+  }
+
+  private emitChannelEvent(channel: string, event: string, data?: unknown): void {
+    const channelMap = this.channelListeners.get(channel);
+    const eventSet = channelMap?.get(event);
+    if (!eventSet) {
+      return;
+    }
+
+    eventSet.forEach((listener) => listener(data));
+  }
+
+  private send(payload: Record<string, unknown>): void {
+    if (!this.ws) {
+      throw new Error('WebSocket is not connected.');
+    }
+
+    this.ws.send(JSON.stringify(payload));
+  }
+
+  private async resolveChannelAuth(
+    channel: string,
+    socketId: string,
+    channelData?: unknown
+  ): Promise<PushrChannelAuth> {
+    if (!this.options.getChannelAuth) {
+      throw new Error('getChannelAuth is not configured for private channels.');
+    }
+
+    const auth = await this.options.getChannelAuth(channel, socketId, channelData);
+    return auth;
+  }
+
+  private buildUrl(signature: PushrConnectSignature): string {
+    const baseUrl = signature.url ?? this.options.url;
+    const separator = baseUrl.includes('?') ? '&' : '?';
+
+    return (
+      baseUrl +
+      separator +
+      `app_id=${encodeURIComponent(signature.appId)}` +
+      `&timestamp=${encodeURIComponent(signature.timestamp)}` +
+      `&signature=${encodeURIComponent(signature.signature)}`
+    );
+  }
+
+  private requiresChannelAuth(channel: string): boolean {
+    return (
+      channel.startsWith('private-') ||
+      channel.startsWith('private:') ||
+      channel.startsWith('presence-') ||
+      channel.startsWith('presence:')
+    );
+  }
+}
