@@ -51,6 +51,46 @@ client.onEvent('news', 'message', (data) => {
 });
 ```
 
+## Сервис для браузера
+
+Если нужен готовый singleton с автоподключением и счётчиком подписок, используйте сервис.
+
+```ts
+import { createPushrService } from '@phpsoftbox/pushr';
+
+const pushr = createPushrService({
+  resolveConfig: () => ({
+    url: 'wss://pushr.example.com',
+    connect: '/broadcast/connect',
+    auth: '/broadcast/auth',
+  }),
+});
+
+await pushr.ensureConnected();
+await pushr.subscribe('news');
+```
+
+По умолчанию сервис использует `fetch` и ищет конфиг в `window.__APP_CONFIG__` (если он есть).
+При необходимости можно передать собственный `request` (например, на axios).
+
+## React hook
+
+```ts
+import { createPushrService } from '@phpsoftbox/pushr';
+import { usePushrEvent } from '@phpsoftbox/pushr/react';
+
+const pushr = createPushrService({
+  resolveConfig: () => ({ url: 'wss://pushr.example.com' }),
+});
+
+usePushrEvent({
+  service: pushr,
+  channel: 'news',
+  event: 'message',
+  onMessage: (payload) => console.log(payload),
+});
+```
+
 ## Подключение и подпись
 
 `getConnectSignature` должен вернуть объект:
