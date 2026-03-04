@@ -139,6 +139,12 @@ export const createPushrService = (options: PushrServiceOptions = {}): PushrServ
       autoReconnect: options.autoReconnect ?? true,
     });
 
+    client.on('connection', () => {
+      subscriptions.forEach((entry, channelName) => {
+        void client?.subscribe(channelName, entry.channelData).catch(() => undefined);
+      });
+    });
+
     return client;
   };
 

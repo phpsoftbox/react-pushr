@@ -16,6 +16,8 @@ export class PushrClient {
   constructor(private readonly options: PushrClientOptions) {}
 
   async connect(): Promise<void> {
+    this.socketId = null;
+
     const signature = await this.options.getConnectSignature();
     const url = this.buildUrl(signature);
 
@@ -30,8 +32,18 @@ export class PushrClient {
         return;
       }
 
-      this.ws.onopen = () => resolve();
-      this.ws.onerror = () => reject(new Error('WebSocket connection failed'));
+      const ws = this.ws;
+      const onOpen = () => {
+        ws.removeEventListener('error', onError);
+        resolve();
+      };
+      const onError = () => {
+        ws.removeEventListener('open', onOpen);
+        reject(new Error('WebSocket connection failed'));
+      };
+
+      ws.addEventListener('open', onOpen, { once: true });
+      ws.addEventListener('error', onError, { once: true });
     });
   }
 
@@ -54,7 +66,7 @@ export class PushrClient {
     };
 
     if (this.requiresChannelAuth(channel)) {
-      const socketId = this.getSocketId();
+      const socketId = await this.resolveSocketId();
       const auth = await this.resolveChannelAuth(channel, socketId, channelData);
       payload.auth = auth.auth;
       if (auth.channelData !== undefined) {
@@ -78,7 +90,7 @@ export class PushrClient {
     };
 
     if (this.requiresChannelAuth(channel)) {
-      const socketId = this.getSocketId();
+      const socketId = await this.resolveSocketId();
       const auth = await this.resolveChannelAuth(channel, socketId);
       payload.auth = auth.auth;
       if (auth.channelData !== undefined) {
@@ -150,6 +162,7 @@ export class PushrClient {
   }
 
   private handleClose(): void {
+    this.socketId = null;
     this.emit('disconnect', {});
     if (this.options.autoReconnect) {
       const delay = this.options.reconnectDelayMs ?? 2000;
@@ -184,6 +197,74 @@ export class PushrClient {
     }
 
     this.ws.send(JSON.stringify(payload));
+  }
+
+  private async resolveSocketId(timeoutMs = 10000): Promise<string> {
+    if (this.socketId) {
+      return this.socketId;
+    }
+
+    const socketIdUnavailableMessage = 'Socket ID is not available yet. Wait for connection event.';
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timeoutId: number | null = null;
+
+      const cleanup = (): void => {
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+
+        this.off('connection', onConnection);
+        this.off('error', onError);
+        this.off('disconnect', onDisconnect);
+      };
+
+      const finish = (callback: () => void): void => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        cleanup();
+        callback();
+      };
+
+      const onConnection = (): void => {
+        finish(resolve);
+      };
+
+      const onDisconnect = (): void => {
+        finish(() => reject(new Error('WebSocket disconnected before socket id was received.')));
+      };
+
+      const onError = (payload: unknown): void => {
+        const message =
+          payload !== null &&
+          typeof payload === 'object' &&
+          'message' in payload &&
+          typeof (payload as { message?: unknown }).message === 'string'
+            ? (payload as { message: string }).message
+            : 'WebSocket error';
+
+        finish(() => reject(new Error(message)));
+      };
+
+      this.on('connection', onConnection);
+      this.on('error', onError);
+      this.on('disconnect', onDisconnect);
+
+      timeoutId = window.setTimeout(() => {
+        finish(() => reject(new Error(socketIdUnavailableMessage)));
+      }, timeoutMs);
+    });
+
+    if (!this.socketId) {
+      throw new Error(socketIdUnavailableMessage);
+    }
+
+    return this.socketId;
   }
 
   private async resolveChannelAuth(
