@@ -295,10 +295,8 @@ export class PushrClient {
 
   private requiresChannelAuth(channel: string): boolean {
     return (
-      channel.startsWith('private-') ||
-      channel.startsWith('private:') ||
-      channel.startsWith('presence-') ||
-      channel.startsWith('presence:')
+      channel.startsWith('private.') ||
+      channel.startsWith('presence.')
     );
   }
 }

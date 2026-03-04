@@ -44,7 +44,7 @@ client.on('connection', (message) => {
 });
 
 await client.subscribe('news');
-await client.subscribe('private-user.10');
+await client.subscribe('private.user.10');
 
 client.onEvent('news', 'message', (data) => {
   console.log(data);
@@ -108,7 +108,7 @@ type PushrConnectSignature = {
 
 ## Авторизация приватных каналов
 
-Для каналов `private-*`/`presence-*` клиент вызывает `getChannelAuth`.
+Для каналов `private.*`/`presence.*` клиент вызывает `getChannelAuth`.
 Ответ должен содержать `auth` и опционально `channelData`:
 
 ```ts
@@ -117,6 +117,12 @@ type PushrChannelAuth = {
   channelData?: unknown;
 };
 ```
+
+## Разница private и presence
+
+- `private.*` — только проверка доступа к каналу.
+- `presence.*` — проверка доступа плюс данные участника (`channelData`, чаще всего `user_id` и имя).
+- В текущем Pushr сервер не шлёт автоматические события join/leave для presence.
 
 ## События
 
