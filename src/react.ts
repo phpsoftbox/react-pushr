@@ -12,6 +12,22 @@ export type UsePushrEventOptions = {
 };
 
 const defaultService = createPushrService();
+const DEFAULT_RETRY_ATTEMPTS = 5;
+const DEFAULT_RETRY_DELAY_MS = 200;
+
+const isRetryableError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+
+  return (
+    message.includes('socket id is not available yet')
+    || message.includes('websocket is not connected')
+    || message.includes('websocket connection failed')
+  );
+};
 
 export const usePushrEvent = ({
   channel,
@@ -28,6 +44,7 @@ export const usePushrEvent = ({
 
     const client = service.getClient();
     let active = true;
+    let retryTimer: number | null = null;
 
     const handler = (payload: unknown) => {
       if (!active) {
@@ -36,14 +53,28 @@ export const usePushrEvent = ({
       onMessage(payload);
     };
 
-    const start = async () => {
+    const start = async (attempt: number = 0): Promise<void> => {
       try {
         await service.subscribe(channel, channelData);
+        if (!active) {
+          return;
+        }
+
         client.onEvent(channel, event, handler);
       } catch (error) {
-        if (onError) {
-          onError(error);
+        if (!active) {
+          return;
         }
+
+        if (attempt < DEFAULT_RETRY_ATTEMPTS && isRetryableError(error)) {
+          retryTimer = window.setTimeout(() => {
+            void start(attempt + 1);
+          }, DEFAULT_RETRY_DELAY_MS);
+
+          return;
+        }
+
+        onError?.(error);
       }
     };
 
@@ -51,8 +82,16 @@ export const usePushrEvent = ({
 
     return () => {
       active = false;
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+      }
+
       client.offEvent(channel, event, handler);
-      service.unsubscribe(channel);
+      try {
+        service.unsubscribe(channel);
+      } catch {
+        // ignore cleanup errors for already closed sockets
+      }
     };
   }, [channel, channelData, event, onMessage, onError, service]);
 };
