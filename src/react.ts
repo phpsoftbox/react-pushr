@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { createPushrService } from './service';
 import type { PushrService } from './service';
 
@@ -37,6 +37,25 @@ export const usePushrEvent = ({
   onError,
   service = defaultService,
 }: UsePushrEventOptions) => {
+  const onMessageRef = useRef(onMessage);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
+
+  const stableOnMessage = useCallback((payload: unknown): void => {
+    onMessageRef.current(payload);
+  }, []);
+
+  const stableOnError = useCallback((error: unknown): void => {
+    onErrorRef.current?.(error);
+  }, []);
+
   useEffect(() => {
     if (!channel) {
       return undefined;
@@ -50,7 +69,7 @@ export const usePushrEvent = ({
       if (!active) {
         return;
       }
-      onMessage(payload);
+      stableOnMessage(payload);
     };
 
     const start = async (attempt: number = 0): Promise<void> => {
@@ -74,7 +93,7 @@ export const usePushrEvent = ({
           return;
         }
 
-        onError?.(error);
+        stableOnError(error);
       }
     };
 
@@ -93,5 +112,5 @@ export const usePushrEvent = ({
         // ignore cleanup errors for already closed sockets
       }
     };
-  }, [channel, channelData, event, onMessage, onError, service]);
+  }, [channel, channelData, event, service, stableOnMessage, stableOnError]);
 };

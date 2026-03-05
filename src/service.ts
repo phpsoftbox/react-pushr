@@ -96,6 +96,8 @@ export const createPushrService = (options: PushrServiceOptions = {}): PushrServ
   let client: PushrClient | null = null;
   let connectPromise: Promise<void> | null = null;
   const subscriptions = new Map<string, { count: number; channelData?: unknown }>();
+  const subscribeInflight = new Map<string, Promise<void>>();
+  const pendingUnsubscribe = new Set<string>();
   const request = options.request ?? defaultRequest;
 
   const resolveConfig = (): Required<PushrConfig> => {
@@ -162,6 +164,26 @@ export const createPushrService = (options: PushrServiceOptions = {}): PushrServ
     return instance;
   };
 
+  const subscribeOnce = async (channel: string, channelData?: unknown): Promise<void> => {
+    let inflight = subscribeInflight.get(channel);
+    if (!inflight) {
+      inflight = (async () => {
+        const instance = await ensureConnected();
+        await instance.subscribe(channel, channelData);
+      })()
+        .finally(() => {
+          subscribeInflight.delete(channel);
+          if (pendingUnsubscribe.delete(channel) && !subscriptions.has(channel)) {
+            client?.unsubscribe(channel);
+          }
+        });
+
+      subscribeInflight.set(channel, inflight);
+    }
+
+    await inflight;
+  };
+
   const subscribe = async (channel: string, channelData?: unknown): Promise<void> => {
     const entry = subscriptions.get(channel);
     if (entry) {
@@ -169,12 +191,41 @@ export const createPushrService = (options: PushrServiceOptions = {}): PushrServ
       if (entry.channelData === undefined && channelData !== undefined) {
         entry.channelData = channelData;
       }
+      pendingUnsubscribe.delete(channel);
+
+      const inflight = subscribeInflight.get(channel);
+      if (inflight) {
+        try {
+          await inflight;
+        } catch (error) {
+          const snapshot = subscriptions.get(channel);
+          if (snapshot) {
+            snapshot.count -= 1;
+            if (snapshot.count <= 0) {
+              subscriptions.delete(channel);
+            }
+          }
+          throw error;
+        }
+      }
       return;
     }
 
-    const instance = await ensureConnected();
-    await instance.subscribe(channel, channelData);
     subscriptions.set(channel, { count: 1, channelData });
+    pendingUnsubscribe.delete(channel);
+
+    try {
+      await subscribeOnce(channel, channelData);
+    } catch (error) {
+      const snapshot = subscriptions.get(channel);
+      if (snapshot) {
+        snapshot.count -= 1;
+        if (snapshot.count <= 0) {
+          subscriptions.delete(channel);
+        }
+      }
+      throw error;
+    }
   };
 
   const unsubscribe = (channel: string): void => {
@@ -189,6 +240,11 @@ export const createPushrService = (options: PushrServiceOptions = {}): PushrServ
     }
 
     subscriptions.delete(channel);
+    if (subscribeInflight.has(channel)) {
+      pendingUnsubscribe.add(channel);
+      return;
+    }
+
     if (client) {
       client.unsubscribe(channel);
     }
@@ -203,6 +259,8 @@ export const createPushrService = (options: PushrServiceOptions = {}): PushrServ
     client = null;
     connectPromise = null;
     subscriptions.clear();
+    subscribeInflight.clear();
+    pendingUnsubscribe.clear();
   };
 
   return {
