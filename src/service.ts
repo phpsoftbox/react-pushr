@@ -143,6 +143,10 @@ export const createPushrService = (options: PushrServiceOptions = {}): PushrServ
 
     client.on('connection', () => {
       subscriptions.forEach((entry, channelName) => {
+        if (subscribeInflight.has(channelName)) {
+          return;
+        }
+
         void client?.subscribe(channelName, entry.channelData).catch(() => undefined);
       });
     });
