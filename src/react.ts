@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { createPushrService } from './service';
-import type { PushrService } from './service';
+import { createPushrService } from './service.js';
+import type { PushrService } from './service.js';
 
 export type UsePushrEventOptions = {
   channel: string | null;
