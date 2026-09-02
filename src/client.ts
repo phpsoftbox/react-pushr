@@ -1,4 +1,4 @@
-import type { PushrChannelAuth, PushrClientOptions, PushrConnectSignature, PushrServerMessage } from './types';
+import type { PushrChannelAuth, PushrClientOptions, PushrConnectSignature, PushrServerMessage } from './types.js';
 
 type Listener<T = unknown> = (payload: T) => void;
 

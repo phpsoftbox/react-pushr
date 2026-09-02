@@ -5,9 +5,9 @@ export type {
   PushrConnectionMessage,
   PushrEventMessage,
   PushrServerMessage,
-} from './types';
-export { PushrClient } from './client';
-export type { PushrService, PushrServiceOptions, PushrServiceRequest } from './service';
+} from './types.js';
+export { PushrClient } from './client.js';
+export type { PushrService, PushrServiceOptions, PushrServiceRequest } from './service.js';
 export {
   createPushrService,
   disconnectPushr,
@@ -15,4 +15,4 @@ export {
   getPushrClient,
   subscribePushrChannel,
   unsubscribePushrChannel,
-} from './service';
+} from './service.js';

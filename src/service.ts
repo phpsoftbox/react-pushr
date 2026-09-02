@@ -1,5 +1,5 @@
-import { PushrClient } from './client';
-import type { PushrChannelAuth, PushrConnectSignature } from './types';
+import { PushrClient } from './client.js';
+import type { PushrChannelAuth, PushrConnectSignature } from './types.js';
 
 type PushrConfig = {
   url?: string;

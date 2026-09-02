@@ -8,6 +8,12 @@
 yarn add @phpsoftbox/pushr
 ```
 
+Пакет публикуется как нативный ESM. Оба entrypoint — `@phpsoftbox/pushr` и
+`@phpsoftbox/pushr/react` — содержат готовые type declarations и импортируются
+Node/Vitest без alias или `deps.inline`. Перед публикацией `yarn test` собирает
+tarball, устанавливает его в изолированный consumer и проверяет native Node import
+и Vitest.
+
 ## Быстрый старт
 
 Нужен backend эндпоинт, который выдаёт подпись для подключения.
