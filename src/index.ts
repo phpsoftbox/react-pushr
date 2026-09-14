@@ -5,14 +5,17 @@ export type {
   PushrConnectionMessage,
   PushrEventMessage,
   PushrServerMessage,
+  PushrTimingOptions,
 } from './types.js';
 export { PushrClient } from './client.js';
-export type { PushrService, PushrServiceOptions, PushrServiceRequest } from './service.js';
+export { PushrError, PushrHttpError } from './errors.js';
+export type { PushrErrorKind, PushrErrorPhase } from './errors.js';
+export type { PushrService, PushrServiceOptions, PushrServiceRequest, PushrSubscription, PushrSubscriptionState, PushrSubscriptionSnapshot, PushrConfig } from './service.js';
 export {
   createPushrService,
   disconnectPushr,
   ensurePushrConnected,
   getPushrClient,
-  subscribePushrChannel,
-  unsubscribePushrChannel,
+  acquirePushrChannel,
+  defaultPushrService,
 } from './service.js';

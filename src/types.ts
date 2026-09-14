@@ -30,14 +30,26 @@ export type PushrServerMessage =
   | { type: 'unsubscribed'; channel: string }
   | { type: 'error'; message: string };
 
-export type PushrClientOptions = {
+export type PushrTimingOptions = {
+  connectTimeoutMs?: number;
+  connectionTimeoutMs?: number;
+  authTimeoutMs?: number;
+  subscribeTimeoutMs?: number;
+  unsubscribeTimeoutMs?: number;
+  reconnectDelayMs?: number;
+  maxReconnectDelayMs?: number;
+};
+
+export type PushrClientOptions = PushrTimingOptions & {
   url: string;
-  getConnectSignature: () => Promise<PushrConnectSignature> | PushrConnectSignature;
+  getConnectSignature: (signal: AbortSignal) => Promise<PushrConnectSignature> | PushrConnectSignature;
   getChannelAuth?: (
     channel: string,
     socketId: string,
-    channelData?: unknown
+    channelData: unknown,
+    signal: AbortSignal,
   ) => Promise<PushrChannelAuth> | PushrChannelAuth;
   autoReconnect?: boolean;
-  reconnectDelayMs?: number;
+  webSocketFactory?: (url: string) => WebSocket;
+  random?: () => number;
 };

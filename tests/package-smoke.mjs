@@ -67,11 +67,15 @@ try {
     join(packageRoot, 'tests', 'consumer', 'smoke.test.ts'),
     join(consumerRoot, 'smoke.test.ts'),
   );
+  await copyFile(
+    join(packageRoot, 'tests', 'consumer', 'vitest.config.mjs'),
+    join(consumerRoot, 'vitest.config.mjs'),
+  );
 
   run(process.execPath, ['native-smoke.mjs'], consumerRoot);
   run(
     process.execPath,
-    [join(packageRoot, 'node_modules', 'vitest', 'vitest.mjs'), 'run', 'smoke.test.ts', '--root', consumerRoot],
+    [join(packageRoot, 'node_modules', 'vitest', 'vitest.mjs'), 'run', 'smoke.test.ts', '--root', consumerRoot, '--config', join(consumerRoot, 'vitest.config.mjs')],
     consumerRoot,
   );
 
