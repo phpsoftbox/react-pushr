@@ -32,13 +32,19 @@
   "scripts": {
     "clean": "rm -rf dist",
     "build": "tsc -p tsconfig.build.json",
-    "test": "node ./tests/package-smoke.mjs",
+    "test": "yarn test:lifecycle && yarn test:package",
+    "test:lifecycle": "vitest run",
+    "test:package": "node ./tests/package-smoke.mjs",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.tests.json",
     "prepack": "yarn clean && yarn build",
     "prepublishOnly": "yarn test"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",
+    "@types/react-dom": "19.2.0",
+    "jsdom": "^26.1.0",
     "react": "^19.2.4",
+    "react-dom": "19.2.4",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   }
