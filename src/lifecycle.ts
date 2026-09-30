@@ -10,13 +10,18 @@ export const defaults = {
   unsubscribeTimeoutMs: 10000,
   reconnectDelayMs: 2000,
   maxReconnectDelayMs: 30000,
+  pingIntervalMs: 25000,
+  pongTimeoutMs: 10000,
 };
+
+/** Keepalive intervals accept 0 to disable the corresponding check. */
+const optionalTimers = new Set<keyof typeof defaults>(['pingIntervalMs', 'pongTimeoutMs']);
 
 export const timingOptions = (options: PushrTimingOptions): typeof defaults => {
   const result = { ...defaults };
   for (const key of Object.keys(defaults) as (keyof typeof defaults)[]) {
     const value = options[key] ?? defaults[key];
-    if (!Number.isFinite(value) || value <= 0 || value > 2147483647) {
+    if (!Number.isFinite(value) || value < 0 || (value === 0 && !optionalTimers.has(key)) || value > 2147483647) {
       throw new PushrError('configuration', 'connection');
     }
     result[key] = value;

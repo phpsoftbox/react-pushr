@@ -17,7 +17,8 @@ yarn add @phpsoftbox/pushr
 
 Пакет — нативный ESM с TypeScript declarations. Основной entrypoint работает без
 React; для `@phpsoftbox/pushr/react` приложение устанавливает React 18 или 19.
-Изменённый API требует major-релиза; [миграция описана ниже](#миграция-с-api-101).
+Переход между major-версиями: [с 2.x на 3.0](#миграция-с-2x-на-30),
+[с 1.0.1](#миграция-с-api-101).
 
 ## Быстрый старт: service и владение каналом
 
@@ -160,9 +161,12 @@ backoff и начинает попытку немедленно либо при�
 | `unsubscribeTimeoutMs` | 10000 | От unsubscribe до unsubscribed |
 | `reconnectDelayMs` | 2000 | Начальная задержка транспортного и auth backoff |
 | `maxReconnectDelayMs` | 30000 | Максимальная задержка после jitter |
+| `pingIntervalMs` | 25000 | Период прикладного ping, `0` отключает keepalive |
+| `pongTimeoutMs` | 10000 | Ожидание ответа на ping, `0` отключает обнаружение потери |
 
-Все значения положительные, конечные и не превышают максимальный интервал
-JavaScript timer. Передавайте их в `createPushrService` или `PushrClientOptions`.
+Все значения конечные и не превышают максимальный интервал JavaScript timer.
+`pingIntervalMs` и `pongTimeoutMs` допускают `0`, остальные строго положительные;
+некорректное значение выбрасывает `PushrError` с `kind: 'configuration'`. Передавайте их в `createPushrService` или `PushrClientOptions`.
 Подписочные подтверждения обрабатывает service; прямой клиент их не ожидает.
 
 Backoff удваивается, jitter составляет ±20%, итог ограничивается максимумом.
@@ -180,6 +184,45 @@ auth. Service включает `autoReconnect` по умолчанию; прям
 дополнительно освобождает все handles и забывает клиент. Следующий явный вызов
 service создаёт новый клиент; освобождённые handles не возрождаются. При нулевом
 refcount service сохраняет общий сокет и его транспортную политику до disconnect.
+
+## Keepalive
+
+Браузерный WebSocket не даёт доступа к control-кадрам ping/pong, поэтому
+полуоткрытое соединение (обрыв без FIN из-за NAT, прокси или смены сети) само
+по себе не обнаруживается: сокет остаётся в `readyState === 1`, события не приходят.
+Клиент проверяет соединение прикладным ping:
+
+- после получения `connection/socket_id` клиент раз в `pingIntervalMs` (25 с)
+  отправляет `{"type":"ping"}`;
+- если за `pongTimeoutMs` (10 с) после ping не пришло ни `{"type":"pong"}`, ни
+  любое другое сообщение, соединение считается потерянным. Клиент закрывает сокет
+  и идёт тем же путём, что и при `close`: событие `disconnect`, ошибка
+  `PushrError` с `kind: 'timeout'`, `phase: 'keepalive'` в `client.on('error')` и
+  service `onError`, reconnect с backoff при `autoReconnect`, восстановление
+  подписок service после нового `socket_id`;
+- любое входящее сообщение снимает ожидание ответа, поэтому при потоке событий
+  лишних разрывов нет;
+- `pong` обрабатывается внутри клиента и не доходит до `on(...)`, `onEvent(...)`
+  и обработчиков service/React;
+- таймеры принадлежат текущему соединению: они останавливаются при разрыве,
+  `client.disconnect()` и `service.disconnect()` и не накапливаются при
+  переподключениях.
+
+```ts
+const pushr = createPushrService({
+  pingIntervalMs: 15000, // прокси закрывает простой короче 25 с
+  pongTimeoutMs: 5000,
+});
+```
+
+`pingIntervalMs: 0` полностью отключает keepalive (поведение 2.x).
+`pongTimeoutMs: 0` оставляет отправку ping (например, чтобы соединение не
+считалось простаивающим промежуточными прокси), но не разрывает его без ответа.
+
+Сервер должен отвечать `{"type":"pong"}` на `{"type":"ping"}`: это делает
+`phpsoftbox/broadcaster` с поддержкой keepalive. Сервер, игнорирующий такое
+сообщение, при включённом keepalive будет разрываться клиентом каждые
+`pingIntervalMs + pongTimeoutMs` простоя; с ним используйте `pingIntervalMs: 0`.
 
 ## Повторное владение и подтверждения сервера
 
@@ -242,13 +285,13 @@ Auth запрос содержит `{ socket_id, channel, channel_data }`; от�
 ## Прямое использование PushrClient
 
 Для низкоуровневой интеграции доступны `connect`, `disconnect`, `isConnected`,
-`getSocketId`, `getGeneration`, `subscribe`, `unsubscribe`, `publish`, `on/off`
+`getSocketId`, `getGeneration`, `subscribe`, `unsubscribe`, `on/off`
 и `onEvent/offEvent`. `getConnectSignature(signal)` и
 `getChannelAuth(channel, socketId, channelData, signal)` принимают сигнал отмены.
 
 `subscribe()` выполняет auth при необходимости и отправляет команду; его Promise
 означает отправку, а не получение subscribed. Клиент не хранит желаемые каналы,
-не восстанавливает их автоматически и не повторяет publish. Он публикует
+не восстанавливает их автоматически. Он публикует
 события `connection`, `disconnect`, `error`, `subscribed`, `unsubscribed`, `event`.
 Для разделения auth и отправки доступны `authorizeChannel` и `sendSubscribe`;
 service использует их для собственных ограниченных попыток.
@@ -257,6 +300,30 @@ service использует их для собственных ограниче
 service: подтверждения протокола не содержат ID операции. `start()` запускает
 транспорт при отсутствии попытки/backoff, но не отменяет явную остановку;
 обычному приложению достаточно service.
+
+Публикация событий из браузера не поддерживается: сервер разрешает `publish`
+только соединению-публикатору бэкенда. Отправляйте события через backend
+(`phpsoftbox/broadcaster`).
+
+## Миграция с 2.x на 3.0
+
+1. Удалён `PushrClient.publish()` и фаза ошибки `'publish'`. Сервер
+   `phpsoftbox/broadcaster` 1.0 разрешает публикацию только соединению-публикатору
+   бэкенда, поэтому из браузера команда всегда получала отказ. Перенесите
+   публикацию на backend. Если код сравнивает `PushrError.phase` с `'publish'`,
+   удалите эту ветку; добавлена фаза `'keepalive'`.
+2. Включён прикладной keepalive: новые опции `pingIntervalMs` (25000) и
+   `pongTimeoutMs` (10000) у `createPushrService` и `PushrClientOptions`,
+   `0` отключает. Добавлен тип входящего сообщения `{ type: 'pong' }`
+   в `PushrServerMessage`.
+3. Требование к серверу: `phpsoftbox/broadcaster` с keepalive, отвечающий
+   `{"type":"pong"}` на `{"type":"ping"}`. Обновляйте сервер до клиента или
+   одновременно. Со старым сервером без такого ответа клиент при
+   `pingIntervalMs > 0` будет переподключаться примерно каждые 35 с простоя;
+   до обновления сервера передайте `pingIntervalMs: 0`.
+4. Тесты приложения с fake timers и управляемым WebSocket после готовности
+   соединения увидят таймер keepalive и исходящие `{"type":"ping"}`. Передайте
+   в них `pingIntervalMs: 0` либо учитывайте эти сообщения.
 
 ## Миграция с API 1.0.1
 

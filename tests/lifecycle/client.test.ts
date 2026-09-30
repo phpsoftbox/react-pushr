@@ -8,7 +8,7 @@ describe('PushrClient lifecycle', () => {
   const create = (options: Partial<ConstructorParameters<typeof PushrClient>[0]> = {}) => {
     const { sockets, factory } = socketFactory();
     const sign = vi.fn(async () => signature);
-    const client = new PushrClient({ url: 'wss://example.test', getConnectSignature: sign, webSocketFactory: factory, autoReconnect: true, random: () => 0.5, ...options });
+    const client = new PushrClient({ url: 'wss://example.test', getConnectSignature: sign, webSocketFactory: factory, autoReconnect: true, random: () => 0.5, pingIntervalMs: 0, ...options });
     clients.push(client);
     return { client, sockets, sign };
   };
@@ -152,10 +152,10 @@ describe('PushrClient lifecycle', () => {
   });
 
   /** Проверяет, что прямой клиент восстанавливает только транспорт, не каналы. @see PushrClient.subscribe */
-  it('does not resubscribe low-level commands or replay publications', async () => {
+  it('does not resubscribe low-level commands', async () => {
     const { client, sockets } = create();
     const attempt = client.connect(); await flush(); sockets[0].ready(); await attempt;
-    await client.subscribe('news'); await client.publish('news', 'update');
+    await client.subscribe('news');
     sockets[0].serverClose(); await vi.advanceTimersByTimeAsync(2000); sockets[1].ready('new'); await flush();
     expect(sockets[1].sent).toEqual([]);
   });
