@@ -26,7 +26,7 @@ export const serviceFixture = (options: PushrServiceOptions = {}) => {
   const onError = vi.fn();
   const service = createPushrService({
     resolveConfig: () => ({ url: 'wss://example.test' }), request, onError,
-    webSocketFactory: factory, random: () => 0.5, ...options,
+    webSocketFactory: factory, random: () => 0.5, pingIntervalMs: 0, ...options,
   });
   return { service, sockets, request, onError, factory };
 };

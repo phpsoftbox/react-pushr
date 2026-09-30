@@ -1,5 +1,5 @@
 export type PushrErrorKind = 'cancelled' | 'timeout' | 'network' | 'http' | 'protocol' | 'conflict' | 'configuration' | 'listener';
-export type PushrErrorPhase = 'signature' | 'open' | 'connection' | 'auth' | 'subscribe' | 'unsubscribe' | 'publish' | 'listener';
+export type PushrErrorPhase = 'signature' | 'open' | 'connection' | 'auth' | 'subscribe' | 'unsubscribe' | 'keepalive' | 'listener';
 
 /** Safe diagnostics: never retain URLs, signatures, HTTP bodies or adapter error messages. */
 export class PushrError extends Error {

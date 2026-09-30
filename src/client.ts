@@ -10,6 +10,8 @@ type Session = {
   socketId: string | null;
   phase: 'signature' | 'open' | 'connection';
   timer?: ReturnType<typeof setTimeout>;
+  pingTimer?: ReturnType<typeof setTimeout>;
+  pongTimer?: ReturnType<typeof setTimeout>;
   promise: Promise<void>;
   resolve: () => void;
   reject: (error: PushrError) => void;
@@ -114,13 +116,6 @@ export class PushrClient {
 
   unsubscribe(channel: string): void { this.send({ type: 'unsubscribe', channel }); }
 
-  async publish(channel: string, event: string, data?: unknown): Promise<void> {
-    const generation = this.getGeneration();
-    const auth = this.requiresChannelAuth(channel) ? await this.authorizeChannel(channel) : undefined;
-    if (generation !== this.getGeneration()) throw new PushrError('cancelled', 'publish', undefined, channel);
-    this.send({ type: 'publish', channel, event, data, auth: auth?.auth, channel_data: auth?.channelData });
-  }
-
   async authorizeChannel(channel: string, channelData?: unknown, signal?: AbortSignal): Promise<PushrChannelAuth> {
     const session = this.session;
     const socketId = this.getSocketId();
@@ -178,6 +173,9 @@ export class PushrClient {
     const wasReady = session.socketId !== null;
     this.session = null;
     clearTimeout(session.timer);
+    clearTimeout(session.pingTimer);
+    clearTimeout(session.pongTimer);
+    session.pingTimer = session.pongTimer = undefined;
     session.controller.abort();
     if (session.ws) {
       session.ws.onopen = session.ws.onmessage = session.ws.onerror = session.ws.onclose = null;
@@ -195,7 +193,31 @@ export class PushrClient {
     if (wasReady && error.kind !== 'cancelled') this.report(error);
   }
 
+  /** Application-level ping: browsers cannot see WebSocket control frames, so half-open sockets need an explicit probe. */
+  private scheduleKeepalive(session: Session): void {
+    if (this.timing.pingIntervalMs === 0) return;
+    session.pingTimer = setTimeout(() => {
+      session.pingTimer = undefined;
+      if (this.session !== session) return;
+      try { this.send({ type: 'ping' }); } catch {
+        // A failed write has already invalidated the session; a socket that is no longer open is treated as lost.
+        if (this.session === session) this.fail(session, new PushrError('network', 'keepalive'));
+        return;
+      }
+      if (this.timing.pongTimeoutMs > 0 && session.pongTimer === undefined) {
+        session.pongTimer = setTimeout(() => {
+          session.pongTimer = undefined;
+          this.fail(session, new PushrError('timeout', 'keepalive'));
+        }, this.timing.pongTimeoutMs);
+      }
+      this.scheduleKeepalive(session);
+    }, this.timing.pingIntervalMs);
+  }
+
   private handleMessage(session: Session, raw: unknown): void {
+    // Any inbound message proves the connection is alive.
+    clearTimeout(session.pongTimer);
+    session.pongTimer = undefined;
     let message: PushrServerMessage;
     try {
       message = JSON.parse(typeof raw === 'string' ? raw : '');
@@ -204,6 +226,8 @@ export class PushrClient {
       this.report(new PushrError('protocol', 'connection'));
       return;
     }
+    // Keepalive reply is internal and never reaches listeners.
+    if (message.type === 'pong') return;
     if (message.type === 'connection') {
       if (session.phase !== 'connection' || typeof message.socket_id !== 'string' || !message.socket_id.trim()
         || typeof message.timestamp !== 'number' || !Number.isFinite(message.timestamp)) {
@@ -217,6 +241,7 @@ export class PushrClient {
       session.socketId = message.socket_id;
       clearTimeout(session.timer);
       this.retries = 0;
+      this.scheduleKeepalive(session);
       session.resolve();
       this.emit('connection', message);
       return;
